@@ -1,0 +1,107 @@
+from fastapi import FastAPI, HTTPException, Query
+from fastapi_pagination import Page, add_pagination
+from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+app = FastAPI()
+
+# Configuração do banco de dados
+SQLALCHEMY_DATABASE_URL = "sqlite:///workout.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+# Modelo de Atleta
+class Atleta(Base):
+    __tablename__ = "atletas"
+    id = Column(Integer, primary_key=True)
+    nome = Column(String, nullable=False)
+    cpf = Column(String, unique=True, nullable=False)
+    centro_treinamento_id = Column(Integer)
+    categoria_id = Column(Integer)
+
+    def __repr__(self):
+        return f"Atleta(nome={self.nome}, cpf={self.cpf})"
+
+# Modelo de Categoria
+class Categoria(Base):
+    __tablename__ = "categorias"
+    id = Column(Integer, primary_key=True)
+    nome = Column(String, nullable=False)
+
+    def __repr__(self):
+        return f"Categoria(nome={self.nome})"
+
+# Modelo de Centro de Treinamento
+class CentroTreinamento(Base):
+    __tablename__ = "centros_treinamento"
+    id = Column(Integer, primary_key=True)
+    nome = Column(String, nullable=False)
+
+    def __repr__(self):
+        return f"CentroTreinamento(nome={self.nome})"
+
+# Criar tabelas no banco de dados
+Base.metadata.create_all(bind=engine)
+
+# Função para obter uma sessão do banco de dados
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Rota para obter todos os atletas
+@app.get("/atletas/", response_model=Page[Atleta])
+async def read_atletas(nome: str = Query(None), cpf: str = Query(None), db: SessionLocal = Depends(get_db)):
+    atletas = db.query(Atleta)
+    if nome:
+        atletas = atletas.filter(Atleta.nome == nome)
+    if cpf:
+        atletas = atletas.filter(Atleta.cpf == cpf)
+    return paginate(atletas)
+
+# Rota para criar um atleta
+@app.post("/atletas/", response_model=Atleta)
+async def create_atleta(atleta: Atleta, db: SessionLocal = Depends(get_db)):
+    try:
+        db.add(atleta)
+        db.commit()
+        return atleta
+    except sqlalchemy.exc.IntegrityError:
+        raise HTTPException(status_code=303, detail=f"Já existe um atleta cadastrado com o cpf: {atleta.cpf}")
+
+# Rota para obter um atleta por ID
+@app.get("/atletas/{atleta_id}", response_model=Atleta)
+async def read_atleta(atleta_id: int, db: SessionLocal = Depends(get_db)):
+    atleta = db.query(Atleta).filter(Atleta.id == atleta_id).first()
+    if atleta is None:
+        raise HTTPException(status_code=404, detail="Atleta não encontrado")
+    return atleta
+
+# Rota para atualizar um atleta
+@app.put("/atletas/{atleta_id}", response_model=Atleta)
+async def update_atleta(atleta_id: int, atleta: Atleta, db: SessionLocal = Depends(get_db)):
+    db_atleta = db.query(Atleta).filter(Atleta.id == atleta_id).first()
+    if db_atleta is None:
+        raise HTTPException(status_code=404, detail="Atleta não encontrado")
+    db_atleta.nome = atleta.nome
+    db_atleta.cpf = atleta.cpf
+    db.commit()
+    return db_atleta
+
+# Rota para deletar um atleta
+@app.delete("/atletas/{atleta_id}")
+async def delete_atleta(atleta_id: int, db: SessionLocal = Depends(get_db)):
+    atleta = db.query(Atleta).filter(Atleta.id == atleta_id).first()
+    if atleta is None:
+        raise HTTPException(status_code=404, detail="Atleta não encontrado")
+    db.delete(atleta)
+    db.commit()
+    return {"message": "Atleta deletado com sucesso"}
+
+add_pagination(app)
